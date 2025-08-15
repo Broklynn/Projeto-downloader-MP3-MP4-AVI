@@ -1,150 +1,196 @@
 import customtkinter
-import yt_dlp
 from pathlib import Path
 import threading
+import yt_dlp
+from PIL import Image, ImageTk
+import requests
+from io import BytesIO
 import re
-import shutil
+import queue
 import os
 import platform
 import subprocess
 
+customtkinter.set_appearance_mode("Dark")
+customtkinter.set_default_color_theme("dark-blue")
+
+app = customtkinter.CTk()
+app.geometry("500x600")
+app.title("Baixador Fluido")
+
+# --- Variáveis ---
+log_queue = queue.Queue()
 cancelar_download = False
 ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
-# --- Janela ---
-app = customtkinter.CTk()
-app.geometry("750x600")  # um pouco maior pra caber o botão novo
-app.title("Baixador Simplificado")
+# --- Frames ---
+# Entrada do link
+frame_link = customtkinter.CTkFrame(app)
+frame_link.pack(fill="x", padx=10, pady=5)
 
-# Widgets principais
-titulo_label = customtkinter.CTkLabel(app, text="Insira o link do YouTube")
-titulo_label.pack(padx=10, pady=10)
+label_link = customtkinter.CTkLabel(frame_link, text="Cole o link do YouTube")
+label_link.pack(anchor="w", pady=2)
 
-link_entry = customtkinter.CTkEntry(app, placeholder_text="Cole seu link aqui...", width=500, height=30)
-link_entry.pack(padx=10, pady=10)
+link_entry = customtkinter.CTkEntry(frame_link, placeholder_text="Cole seu link aqui...")
+link_entry.pack(fill="x", pady=2)
 
-# ComboBox de formatos fixos
+# Informações do vídeo
+frame_info = customtkinter.CTkFrame(app)
+frame_info.pack(fill="x", padx=10, pady=5)
+
+thumbnail_label = customtkinter.CTkLabel(frame_info, text="")
+thumbnail_label.pack(side="left", padx=5, pady=5)
+
+video_title_label = customtkinter.CTkLabel(frame_info, text="Título do vídeo")
+video_title_label.pack(side="left", padx=5, pady=5)
+
+# Opções de download
+frame_opcoes = customtkinter.CTkFrame(app)
+frame_opcoes.pack(fill="x", padx=10, pady=5)
+
 formatos = ["MP3 128k", "MP4 480p", "MP4 720p", "MP4 1080p", "AVI", "MKV"]
-formato_combo = customtkinter.CTkComboBox(app, values=formatos, state="normal")
-formato_combo.set(formatos[0])
-formato_combo.pack(padx=10, pady=10)
-
-# Botões de controle
-botao_frame = customtkinter.CTkFrame(app)
-botao_frame.pack(padx=10, pady=10)
-
-download_button = customtkinter.CTkButton(botao_frame, text="Baixar")
-download_button.pack(side="left", padx=5)
-
-cancel_button = customtkinter.CTkButton(botao_frame, text="Cancelar", fg_color="red", hover_color="#aa0000", state="disabled")
-cancel_button.pack(side="left", padx=5)
+formato_combo = customtkinter.CTkComboBox(frame_opcoes, values=formatos)
+formato_combo.set(formatos[2])
+formato_combo.pack(side="left", padx=5, pady=5)
 
 # Barra de progresso
-progress_bar = customtkinter.CTkProgressBar(app, width=500)
+progress_bar = customtkinter.CTkProgressBar(app)
+progress_bar.pack(fill="x", padx=10, pady=5)
 progress_bar.set(0)
-progress_bar.pack(padx=10, pady=10)
 
-status_detalhado_label = customtkinter.CTkLabel(app, text="")
-status_detalhado_label.pack(padx=10, pady=5)
+# Botões
+frame_botoes = customtkinter.CTkFrame(app)
+frame_botoes.pack(fill="x", padx=10, pady=5)
 
-status_label = customtkinter.CTkLabel(app, text="")
-status_label.pack(padx=10, pady=5)
+download_button = customtkinter.CTkButton(frame_botoes, text="Baixar", state="disabled")
+download_button.pack(side="left", padx=5, pady=5)
 
-# Botão para abrir a pasta (começa invisível)
-def abrir_pasta_downloads():
-    pasta = Path.home() / "Downloads"
-    system = platform.system()
-    try:
-        if system == "Windows":
-            os.startfile(pasta)
-        elif system == "Darwin":  # macOS
-            subprocess.run(["open", pasta])
-        else:  # Linux e outros
-            subprocess.run(["xdg-open", pasta])
-    except Exception as e:
-        update_ui_safe(status_label.configure, text=f"Erro ao abrir pasta: {e}", text_color="red")
+cancel_button = customtkinter.CTkButton(frame_botoes, text="Cancelar", state="disabled")
+cancel_button.pack(side="left", padx=5, pady=5)
 
-abrir_pasta_button = customtkinter.CTkButton(app, text="Abrir Pasta de Downloads", command=abrir_pasta_downloads)
-abrir_pasta_button.pack(pady=10)
-abrir_pasta_button.configure(state="disabled")  # desabilitado até terminar o download
+abrir_pasta_button = customtkinter.CTkButton(frame_botoes, text="Abrir Pasta", state="disabled")
+abrir_pasta_button.pack(side="left", padx=5, pady=5)
 
-# --- Funções auxiliares ---
+# Status centralizado
+status_label = customtkinter.CTkLabel(app, text="Pronto")
+status_label.pack(fill="x", padx=10, pady=5)
+
+# --- Funções ---
 def update_ui_safe(func, *args, **kwargs):
     app.after(0, lambda: func(*args, **kwargs))
+
+def buscar_info_video():
+    link = link_entry.get().strip()
+    if not re.match(r'^https?://(www\.)?(youtube\.com|youtu\.be)/', link):
+        update_ui_safe(status_label.configure, text="Link inválido")
+        update_ui_safe(download_button.configure, state="disabled")
+        return
+
+    update_ui_safe(status_label.configure, text="Buscando informações...")
+    update_ui_safe(download_button.configure, state="disabled")
+    update_ui_safe(video_title_label.configure, text="")
+    update_ui_safe(thumbnail_label.configure, image=None, text="")
+
+    def worker():
+        try:
+            ydl_opts = {"quiet": True, "no_warnings": True}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(link, download=False)
+                titulo = info.get("title", "Sem título")
+                thumb_url = info.get("thumbnail", "")
+
+                update_ui_safe(video_title_label.configure, text=titulo)
+
+                if thumb_url:
+                    try:
+                        response = requests.get(thumb_url, timeout=2)
+                        image = Image.open(BytesIO(response.content)).resize((120,68))
+                        thumb_imgtk = ImageTk.PhotoImage(image)
+                        update_ui_safe(thumbnail_label.configure, image=thumb_imgtk, text="")
+                        thumbnail_label.image = thumb_imgtk
+                    except:
+                        update_ui_safe(thumbnail_label.configure, text="Thumbnail não disponível")
+
+                update_ui_safe(download_button.configure, state="normal")
+                update_ui_safe(status_label.configure, text="Pronto para baixar")
+        except:
+            update_ui_safe(status_label.configure, text="Erro ao buscar vídeo")
+            update_ui_safe(download_button.configure, state="disabled")
+
+    threading.Thread(target=worker, daemon=True).start()
 
 def meu_hook_de_progresso(d):
     global cancelar_download
     if cancelar_download:
         raise yt_dlp.utils.DownloadError("Download cancelado pelo usuário.")
-    if d['status'] == 'downloading':
-        porc_raw = d.get('_percent_str', '0%')
-        porc_limpa = ansi_escape.sub('', porc_raw).strip()
+
+    if d.get("status") == "downloading":
+        porc_raw = d.get("_percent_str", "0%")
+        porc_limpa = ansi_escape.sub("", porc_raw).strip()  # limpa códigos ANSI
+
+        velocidade_raw = d.get("_speed_str", "0 B/s")
+        velocidade_limpa = ansi_escape.sub("", velocidade_raw).strip()
+
         try:
-            porc_float = float(porc_limpa.replace('%', '')) / 100
+            porc_float = float(porc_limpa.replace("%","")) / 100
             update_ui_safe(progress_bar.set, porc_float)
-            update_ui_safe(status_detalhado_label.configure, text=f"Baixando... {porc_limpa}")
-        except Exception:
+            update_ui_safe(status_label.configure, text=f"Baixando... {porc_limpa} | {velocidade_limpa}")
+        except ValueError:
+            # caso não consiga converter, ignora para não travar
             pass
-    elif d['status'] == 'finished':
+
+    elif d.get("status") == "finished":
         update_ui_safe(progress_bar.set, 1)
-        update_ui_safe(status_detalhado_label.configure, text="Finalizando...")
+        update_ui_safe(status_label.configure, text="Finalizando arquivo...")
+
 
 def fazer_download():
     global cancelar_download
     cancelar_download = False
+    update_ui_safe(progress_bar.set, 0)
+    update_ui_safe(cancel_button.configure, state="normal")
+    update_ui_safe(download_button.configure, state="disabled")
     update_ui_safe(abrir_pasta_button.configure, state="disabled")
 
     link = link_entry.get().strip()
     formato = formato_combo.get()
+    pasta_downloads = Path.home() / "Downloads"
 
-    if not re.match(r'^https?://(www\.)?(youtube\.com|youtu\.be)/', link):
-        update_ui_safe(status_label.configure, text="Erro: link inválido.", text_color="red")
-        return
+    if formato.startswith("MP4"):
+        resolucao = formato.split()[1].replace("p","")
+        fmt_str = f"bestvideo[ext=mp4][height<={resolucao}]+bestaudio[ext=m4a]/best[ext=mp4]"
+        post = []
+    elif formato == "AVI":
+        fmt_str = "bestvideo+bestaudio/best"
+        post = [{"key":"FFmpegVideoConvertor","preferedformat":"avi"}]
+    elif formato == "MKV":
+        fmt_str = "bestvideo+bestaudio/best"
+        post = [{"key":"FFmpegVideoConvertor","preferedformat":"mkv"}]
+    elif formato == "MP3 128k":
+        fmt_str = "bestaudio/best"
+        post = [{"key":"FFmpegExtractAudio","preferredcodec":"mp3","preferredquality":"128"}]
+    else:
+        fmt_str = "best"
+        post = []
 
-    update_ui_safe(status_label.configure, text="", text_color="white")
-    update_ui_safe(progress_bar.set, 0)
-    update_ui_safe(cancel_button.configure, state="normal")
-    update_ui_safe(download_button.configure, state="disabled")
+    ydl_opts = {
+        "format": fmt_str,
+        "postprocessors": post,
+        "outtmpl": str(pasta_downloads / "%(title).200B.%(ext)s"),
+        "noplaylist": True,
+        "progress_hooks": [meu_hook_de_progresso],
+        "quiet": True,
+        "no_warnings": True,
+    }
 
     try:
-        pasta_downloads = Path.home() / "Downloads"
-        if formato.startswith("MP4"):
-            resolucao = formato.split()[1].replace("p", "")
-            fmt_str = f"bestvideo[ext=mp4][height<={resolucao}]+bestaudio[ext=m4a]/best[ext=mp4]"
-            post = []
-        elif formato == "AVI":
-            fmt_str = "bestvideo+bestaudio/best"
-            post = [{"key": "FFmpegVideoConvertor", "preferedformat": "avi"}]
-        elif formato == "MKV":
-            fmt_str = "bestvideo+bestaudio/best"
-            post = [{"key": "FFmpegVideoConvertor", "preferedformat": "mkv"}]
-        elif formato == "MP3 128k":
-            fmt_str = "bestaudio/best"
-            post = [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "128"}]
-        else:
-            fmt_str = "best"
-            post = []
-
-        ydl_opts = {
-            "format": fmt_str,
-            "postprocessors": post,
-            "outtmpl": str(pasta_downloads / "%(title).200B.%(ext)s"),
-            "noplaylist": True,
-            "progress_hooks": [meu_hook_de_progresso],
-            "quiet": True,
-            "no_warnings": True,
-        }
-
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([link])
 
-        update_ui_safe(status_label.configure, text="Download concluído com sucesso!", text_color="green")
-        update_ui_safe(status_detalhado_label.configure, text="Arquivo salvo em Downloads")
-        update_ui_safe(abrir_pasta_button.configure, state="normal")  # libera botão
-    except yt_dlp.utils.DownloadError as e:
-        update_ui_safe(status_label.configure, text=str(e), text_color="orange")
+        update_ui_safe(status_label.configure, text="Download concluído!")
+        update_ui_safe(abrir_pasta_button.configure, state="normal")
     except Exception as e:
-        update_ui_safe(status_label.configure, text=f"Erro durante o download: {e}", text_color="red")
+        update_ui_safe(status_label.configure, text=f"Erro: {e}")
     finally:
         update_ui_safe(download_button.configure, state="normal")
         update_ui_safe(cancel_button.configure, state="disabled")
@@ -155,11 +201,21 @@ def iniciar_download():
 def cancelar_download_func():
     global cancelar_download
     cancelar_download = True
-    update_ui_safe(status_detalhado_label.configure, text="Cancelando download...")
+    update_ui_safe(status_label.configure, text="Cancelando download...")
 
-# Liga botões
+def abrir_pasta():
+    downloads = Path.home() / "Downloads"
+    if platform.system() == "Windows":
+        os.startfile(downloads)
+    elif platform.system() == "Darwin":
+        subprocess.Popen(["open", downloads])
+    else:
+        subprocess.Popen(["xdg-open", downloads])
+
+# --- Bindings ---
+link_entry.bind("<KeyRelease>", lambda e: buscar_info_video())
 download_button.configure(command=iniciar_download)
 cancel_button.configure(command=cancelar_download_func)
+abrir_pasta_button.configure(command=abrir_pasta)
 
-# --- Motor ---
 app.mainloop()
