@@ -5,16 +5,18 @@
 
 ## 2. Instalar dependências
 Abra o terminal (ou CMD no Windows) e digite:
-
+````
 pip install customtkinter yt-dlp
-
+````
 
 
 SE QUISER GARANTIR A ULTIMA VERSÃO:
-
+````
 pip install --upgrade pip
+````
+````
 pip install --upgrade customtkinter yt-dlp
-
+````
 
 
 1º INSTALAR FFmpeg (NECESSARIO PARA ALGUNS FORMATOS)
@@ -29,22 +31,22 @@ Abra Painel de Controle → Sistema → Configurações Avançadas → Variávei
 Em Variáveis do sistema, selecione Path → Editar → Novo.
 
 Adicione o caminho da pasta bin do FFmpeg, por exemplo:
-
+````
     C:\ffmpeg\bin
-
+````
 Clique em OK e reinicie o terminal ou CMD.
 
 2º TESTE DIGITANDO NO TERMINAL:
-
+````
 ffmpeg -version
-
+````
 
 3º RODAR PROGRAMA
 
 No terminal, vá até a pasta do programa e execute:
-
+````
 python main.py
-
+````
 
 4º. USANDO BAIXADOR
 
@@ -57,6 +59,11 @@ python main.py
  4º Para cancelar, clique em Cancelar.
 
  5º Após o download, clique em Abrir Pasta de Downloads para encontrar o arquivo.
+
+
+
+
+ ⚠️ Este projeto tem finalidade educacional e deve ser utilizado apenas para conteúdos de livre uso ou que o usuário possua autorização para download.
 
 
  
