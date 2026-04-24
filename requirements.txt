@@ -1,0 +1,4 @@
+customtkinter
+yt-dlp
+Pillow
+requests

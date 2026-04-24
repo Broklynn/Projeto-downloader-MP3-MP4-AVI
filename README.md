@@ -1,69 +1,73 @@
-# Guia Rápido - Baixador Simplificado de YouTube
+﻿# Downloader YouTube - MP3/MP4
 
-## 1. Instalar Python
-- Baixe e instale Python 3.10 ou superior: [https://www.python.org/downloads/](https://www.python.org/downloads/)
+Aplicativo desktop em Python usando CustomTkinter, yt-dlp e FFmpeg.
 
-## 2. Instalar dependências
-Abra o terminal (ou CMD no Windows) e digite:
-````
-pip install customtkinter yt-dlp
-````
+## Estrutura do projeto
 
+- `main.py` - ponto de entrada do aplicativo
+- `src/app.py` - interface e lógica de interação com o usuário
+- `src/downloader.py` - lógica de download com yt-dlp
+- `src/validators.py` - validações de URL e pastas
+- `src/config.py` - configurações e opções de formato
+- `src/history.py` - histórico de downloads usando SQLite
+- `requirements.txt` - dependências do projeto
 
-SE QUISER GARANTIR A ULTIMA VERSÃO:
-````
-pip install --upgrade pip
-````
-````
-pip install --upgrade customtkinter yt-dlp
-````
+## Requisitos
 
+- Python 3.10+
+- `customtkinter`
+- `yt-dlp`
+- `Pillow`
+- `requests`
+- `ffmpeg` instalado e disponível no `PATH`
 
-1º INSTALAR FFmpeg (NECESSARIO PARA ALGUNS FORMATOS)
-O FFmpeg é usado para converter vídeos e extrair áudio. Siga os passos:
+## Instalação
 
-Baixe o FFmpeg: https://ffmpeg.org/download.html → escolha Windows builds by gyan.dev.
+No terminal, execute:
 
-Extraia a pasta baixada em um local fixo, por exemplo C:\ffmpeg.
+```bash
+pip install -r requirements.txt
+```
 
-Abra Painel de Controle → Sistema → Configurações Avançadas → Variáveis de Ambiente.
+## Uso
 
-Em Variáveis do sistema, selecione Path → Editar → Novo.
+1. Abra um terminal na pasta do projeto.
+2. Execute:
 
-Adicione o caminho da pasta bin do FFmpeg, por exemplo:
-````
-    C:\ffmpeg\bin
-````
-Clique em OK e reinicie o terminal ou CMD.
-
-2º TESTE DIGITANDO NO TERMINAL:
-````
-ffmpeg -version
-````
-
-3º RODAR PROGRAMA
-
-No terminal, vá até a pasta do programa e execute:
-````
+```bash
 python main.py
-````
+```
 
-4º. USANDO BAIXADOR
+3. Cole o link do YouTube.
+4. Clique em `Buscar informações`.
+5. Escolha o formato e a pasta de destino.
+6. Clique em `Baixar`.
+7. Use `Cancelar` para parar o download em andamento.
+8. Clique em `Abrir pasta` para ver os arquivos baixados.
 
- 1º Cole o link do YouTube na caixa de texto.
+## Funcionalidades
 
- 2º Escolha o formato desejado (MP3, MP4, AVI, MKV).
+- Baixa vídeo em MP4 em várias qualidades
+- Baixa áudio em MP3 com diferentes bitrates
+- Permite playlist ou vídeo único
+- Escolha de pasta de destino
+- Histórico básico de downloads em SQLite
+- Mensagens de erro mais claras
 
- 3º Clique em Baixar.
+## Observações
 
- 4º Para cancelar, clique em Cancelar.
+- O FFmpeg é necessário para conversão de áudio para MP3.
+- Se o FFmpeg não estiver no `PATH`, o download pode falhar em formatos de áudio.
+- Para gerar um executável no futuro, instale o PyInstaller separadamente:
 
- 5º Após o download, clique em Abrir Pasta de Downloads para encontrar o arquivo.
+```bash
+pip install pyinstaller
+```
 
+```bash
+pyinstaller --onefile --windowed main.py
+```
 
+## Licença
 
-
- ⚠️ Este projeto tem finalidade educacional e deve ser utilizado apenas para conteúdos de livre uso ou que o usuário possua autorização para download.
-
-
- 
+Use este projeto apenas para conteúdo legal e autorizado.
