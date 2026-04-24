@@ -68,6 +68,5 @@ pip install pyinstaller
 pyinstaller --onefile --windowed main.py
 ```
 
-## Licença
 
 Conteudo apenas para estudos.
