@@ -68,5 +68,3 @@ pip install pyinstaller
 pyinstaller --onefile --windowed main.py
 ```
 
-
-Conteudo apenas para estudos.
