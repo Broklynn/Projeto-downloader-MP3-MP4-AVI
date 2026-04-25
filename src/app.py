@@ -19,6 +19,7 @@ from .config import DEFAULT_DOWNLOAD_PATH, FFMPEG_LOCATION, ConfigManager
 from .downloader import DownloadError, YTDownloader
 from .history import HistoryDB
 from .validators import is_valid_folder_path, is_valid_youtube_url
+from .update_checker import UpdateChecker
 
 customtkinter.set_appearance_mode("Dark")
 customtkinter.set_default_color_theme("dark-blue")
@@ -43,7 +44,15 @@ class App:
         self.thumbnail_image = None
         self.ffmpeg_available = (FFMPEG_LOCATION / "ffmpeg.exe").exists() or shutil.which("ffmpeg") is not None
 
+        # Verificador de atualização
+        self.update_checker = UpdateChecker()
+        self.update_info = None
+        self.update_button = None
+
         self._build_ui()
+
+        # Verificar atualizações em segundo plano
+        self._check_for_updates_async()
 
         if not self.ffmpeg_available:
             path_text = str(FFMPEG_LOCATION)
@@ -120,7 +129,7 @@ class App:
 
         buttons_frame = customtkinter.CTkFrame(self.window)
         buttons_frame.pack(fill="x", padx=16, pady=(0, 16))
-        for index in range(5):
+        for index in range(6):  # Aumentado para 6 colunas
             buttons_frame.grid_columnconfigure(index, weight=1)
 
         self.download_button = customtkinter.CTkButton(buttons_frame, text="Baixar", command=self.start_download, state="disabled")
@@ -135,8 +144,8 @@ class App:
         self.theme_button = customtkinter.CTkButton(buttons_frame, text="Tema", command=self.toggle_theme)
         self.theme_button.grid(row=0, column=3, sticky="ew", padx=(0, 8), pady=8)
 
-        self.update_button = customtkinter.CTkButton(buttons_frame, text="Atualizar yt-dlp", command=self.update_ytdlp)
-        self.update_button.grid(row=0, column=4, sticky="ew", padx=(0, 8), pady=8)
+        self.update_ytdlp_button = customtkinter.CTkButton(buttons_frame, text="Atualizar yt-dlp", command=self.update_ytdlp)
+        self.update_ytdlp_button.grid(row=0, column=4, sticky="ew", padx=(0, 8), pady=8)
 
         self.history_scrollable = customtkinter.CTkScrollableFrame(self.window, height=200)
         self.history_scrollable.pack(fill="x", padx=16, pady=(0, 16))
@@ -341,7 +350,7 @@ class App:
             self.window.after(0, lambda: self.download_button.configure(state="normal"))
 
     def update_ytdlp(self):
-        self.update_button.configure(state="disabled")
+        self.update_ytdlp_button.configure(state="disabled")
         self.set_status("Atualizando yt-dlp...")
         threading.Thread(target=self._update_ytdlp_thread, daemon=True).start()
 
@@ -363,7 +372,7 @@ class App:
             self.set_status(f"Erro ao atualizar yt-dlp: {error}")
             self.window.after(0, lambda: messagebox.showerror("Erro", f"Erro ao atualizar yt-dlp:\n{error}"))
         finally:
-            self.window.after(0, lambda: self.update_button.configure(state="normal"))
+            self.window.after(0, lambda: self.update_ytdlp_button.configure(state="normal"))
 
     def show_toast(self, message, duration=3000):
         self.toast_label.configure(text=message)
@@ -495,6 +504,45 @@ class App:
 
     def run(self):
         self.window.mainloop()
+
+    def _check_for_updates_async(self):
+        """Verifica atualizações em segundo plano sem travar a interface."""
+        def callback(update_info):
+            self.window.after(0, lambda: self._handle_update_check_result(update_info))
+
+        self.update_checker.check_async(callback)
+
+    def _handle_update_check_result(self, update_info):
+        """Processa o resultado da verificação de atualização."""
+        if update_info:
+            self.update_info = update_info
+            self._show_update_notification(update_info)
+        else:
+            # Se não conseguiu verificar, mostra mensagem discreta
+            self.set_status("Não foi possível verificar atualizações.")
+
+    def _show_update_notification(self, update_info):
+        """Mostra notificação de atualização disponível."""
+        version = update_info.get("version", "")
+        self.set_status(f"Nova versão disponível: {version}")
+
+        # Adiciona botão de atualização se não existir
+        if not self.update_button:
+            self.update_button = customtkinter.CTkButton(
+                self.button_frame,
+                text="Ver atualização",
+                command=self._open_update_url,
+                width=120,
+                height=32,
+                font=(None, 11)
+            )
+            self.update_button.grid(row=0, column=4, padx=(8, 0), pady=8, sticky="e")
+
+    def _open_update_url(self):
+        """Abre o navegador na URL de download da atualização."""
+        if self.update_info and self.update_info.get("download_url"):
+            import webbrowser
+            webbrowser.open(self.update_info["download_url"])
 
 
 def run_app() -> None:
