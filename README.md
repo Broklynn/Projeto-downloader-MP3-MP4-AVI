@@ -68,6 +68,3 @@ pip install pyinstaller
 pyinstaller --onefile --windowed main.py
 ```
 
-## Licença
-
-Use este projeto apenas para conteúdo legal e autorizado.
