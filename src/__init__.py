@@ -1,1 +1,1 @@
-# Pacote do aplicativo de download
+# Package initialization

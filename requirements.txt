@@ -1,4 +1,4 @@
-customtkinter
 yt-dlp
-Pillow
+customtkinter
+pillow
 requests

@@ -1,4 +1,4 @@
-import os
+﻿import os
 import platform
 import re
 import shutil
@@ -15,7 +15,7 @@ import requests
 import yt_dlp
 from PIL import Image
 
-from .config import DEFAULT_DOWNLOAD_PATH, FFMPEG_LOCATION
+from .config import DEFAULT_DOWNLOAD_PATH, FFMPEG_LOCATION, ConfigManager
 from .downloader import DownloadError, YTDownloader
 from .history import HistoryDB
 from .validators import is_valid_folder_path, is_valid_youtube_url
@@ -27,9 +27,13 @@ ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 
 class App:
     def __init__(self):
+        self.config_manager = ConfigManager()
+        customtkinter.set_appearance_mode(self.config_manager.get_appearance_mode())
+        customtkinter.set_default_color_theme("dark-blue")
         self.window = customtkinter.CTk()
         self.window.title("Downloader YouTube - MP3/MP4")
-        self.window.geometry("540x640")
+        self.window.geometry("560x660")
+        self.window.minsize(560, 660)
         self.window.resizable(False, False)
 
         self.downloader = YTDownloader()
@@ -44,10 +48,6 @@ class App:
         if not self.ffmpeg_available:
             path_text = str(FFMPEG_LOCATION)
             self.set_status(f"Aviso: FFmpeg não encontrado em {path_text}. Instale-o para converter MP3/MP4 corretamente.")
-            self.window.after(200, lambda: messagebox.showwarning(
-                "FFmpeg ausente",
-                f"O FFmpeg não foi encontrado em {path_text}.\nInstale-o em {path_text} ou adicione-o ao PATH.",
-            ))
 
     def _build_ui(self):
         customtkinter.CTkLabel(self.window, text="Downloader YouTube", font=(None, 24, "bold")).pack(padx=16, pady=(16, 8))
@@ -99,7 +99,7 @@ class App:
         path_frame = customtkinter.CTkFrame(self.window)
         path_frame.pack(fill="x", padx=16, pady=(0, 10))
 
-        self.destination_var = customtkinter.StringVar(value=str(DEFAULT_DOWNLOAD_PATH))
+        self.destination_var = customtkinter.StringVar(value=self.config_manager.get_last_download_path())
         self.destination_entry = customtkinter.CTkEntry(path_frame, textvariable=self.destination_var)
         self.destination_entry.grid(row=0, column=0, sticky="ew", padx=(0, 8), pady=8)
         path_frame.grid_columnconfigure(0, weight=1)
@@ -110,27 +110,39 @@ class App:
         self.status_label = customtkinter.CTkLabel(self.window, text="Pronto para começar", anchor="w")
         self.status_label.pack(fill="x", padx=16, pady=(0, 8))
 
+        self.toast_label = customtkinter.CTkLabel(self.window, text="", anchor="center", fg_color="#2E8B57", text_color="white", corner_radius=8)
+        self.toast_label.pack(fill="x", padx=16, pady=(0, 8))
+        self.toast_label.pack_forget()  # Esconder inicialmente
+
         self.progress_bar = customtkinter.CTkProgressBar(self.window)
         self.progress_bar.set(0)
         self.progress_bar.pack(fill="x", padx=16, pady=(0, 10))
 
         buttons_frame = customtkinter.CTkFrame(self.window)
         buttons_frame.pack(fill="x", padx=16, pady=(0, 16))
+        for index in range(5):
+            buttons_frame.grid_columnconfigure(index, weight=1)
 
         self.download_button = customtkinter.CTkButton(buttons_frame, text="Baixar", command=self.start_download, state="disabled")
-        self.download_button.grid(row=0, column=0, padx=(0, 8), pady=8)
-
-        self.cancel_button = customtkinter.CTkButton(buttons_frame, text="Cancelar", command=self.cancel_download, state="disabled")
-        self.cancel_button.grid(row=0, column=1, padx=(0, 8), pady=8)
+        self.download_button.grid(row=0, column=0, sticky="ew", padx=(0, 8), pady=8)
 
         self.open_folder_button = customtkinter.CTkButton(buttons_frame, text="Abrir pasta", command=self.open_destination_folder, state="disabled")
-        self.open_folder_button.grid(row=0, column=2, padx=(0, 8), pady=8)
+        self.open_folder_button.grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=8)
 
         self.history_button = customtkinter.CTkButton(buttons_frame, text="Histórico", command=self.show_history)
-        self.history_button.grid(row=0, column=3, padx=(0, 8), pady=8)
+        self.history_button.grid(row=0, column=2, sticky="ew", padx=(0, 8), pady=8)
+
+        self.theme_button = customtkinter.CTkButton(buttons_frame, text="Tema", command=self.toggle_theme)
+        self.theme_button.grid(row=0, column=3, sticky="ew", padx=(0, 8), pady=8)
 
         self.update_button = customtkinter.CTkButton(buttons_frame, text="Atualizar yt-dlp", command=self.update_ytdlp)
-        self.update_button.grid(row=1, column=0, columnspan=4, sticky="ew", padx=(0, 8), pady=(0, 8))
+        self.update_button.grid(row=0, column=4, sticky="ew", padx=(0, 8), pady=8)
+
+        self.history_scrollable = customtkinter.CTkScrollableFrame(self.window, height=200)
+        self.history_scrollable.pack(fill="x", padx=16, pady=(0, 16))
+        self.history_scrollable.grid_columnconfigure(0, weight=1)
+
+        self._show_history_placeholder()
 
     def fetch_info(self):
         url = self.url_entry.get().strip()
@@ -171,14 +183,8 @@ class App:
             else:
                 duration_text = self._format_duration(info.get("duration"))
 
-            already_downloaded = self.history_db.video_downloaded(url)
-            if already_downloaded:
-                self.set_status("Este vídeo já foi baixado anteriormente.")
-                self.download_button.configure(state="disabled")
-            else:
-                self.set_status("Pronto para baixar")
-                self.download_button.configure(state="normal")
-
+            self.set_status("Pronto para baixar")
+            self.download_button.configure(state="normal")
             self._update_info_label(subtitle)
             self._update_duration_label(duration_text)
             self._load_thumbnail(info.get("thumbnail"))
@@ -271,6 +277,7 @@ class App:
         folder = filedialog.askdirectory(initialdir=self.destination_var.get())
         if folder:
             self.destination_var.set(folder)
+            self.config_manager.set_last_download_path(folder)
 
     def start_download(self):
         url = self.url_entry.get().strip()
@@ -294,16 +301,7 @@ class App:
             self.set_status("Instale o FFmpeg antes de baixar MP3.")
             return
 
-        if self.history_db.video_downloaded(url):
-            messagebox.showinfo(
-                "Já baixado",
-                "Esse vídeo já foi baixado anteriormente. Evitando duplicação.",
-            )
-            self.set_status("Download evitado: vídeo já baixado.")
-            return
-
         self.download_button.configure(state="disabled")
-        self.cancel_button.configure(state="normal")
         self.open_folder_button.configure(state="disabled")
         self.progress_bar.set(0)
         self.download_cancelled = False
@@ -334,16 +332,13 @@ class App:
                 output_path=str(destination),
             )
             self.set_status("Download concluído com sucesso.")
+            self.show_toast("Download concluído com sucesso!")
             self.open_folder_button.configure(state="normal")
         except Exception as error:
             message = str(error)
-            if "ffmpeg" in message.lower():
-                message = "Erro: FFmpeg não encontrado. Instale o FFmpeg e adicione ao PATH."
-                self.window.after(0, lambda: messagebox.showerror("Erro FFmpeg", message))
             self.set_status(f"Erro no download: {message}")
         finally:
             self.window.after(0, lambda: self.download_button.configure(state="normal"))
-            self.window.after(0, lambda: self.cancel_button.configure(state="disabled"))
 
     def update_ytdlp(self):
         self.update_button.configure(state="disabled")
@@ -370,9 +365,23 @@ class App:
         finally:
             self.window.after(0, lambda: self.update_button.configure(state="normal"))
 
-    def cancel_download(self):
-        self.download_cancelled = True
-        self.set_status("Cancelando download...")
+    def show_toast(self, message, duration=3000):
+        self.toast_label.configure(text=message)
+        self.toast_label.pack(fill="x", padx=16, pady=(0, 8))
+        self.window.after(duration, lambda: self.toast_label.pack_forget())
+
+    def copy_path_to_clipboard(self, path):
+        self.window.clipboard_clear()
+        self.window.clipboard_append(path)
+        self.show_toast("Caminho copiado para a área de transferência!")
+
+    def toggle_theme(self):
+        current = customtkinter.get_appearance_mode()
+        next_mode = "Light" if current == "Dark" else "Dark"
+        customtkinter.set_appearance_mode(next_mode)
+        self.config_manager.set_appearance_mode(next_mode)
+        tema_label = "Claro" if next_mode == "Light" else "Escuro"
+        self.set_status(f"Tema alterado para {tema_label}")
 
     def open_destination_folder(self):
         destination = self.destination_var.get().strip()
@@ -389,15 +398,97 @@ class App:
 
     def show_history(self):
         records = self.history_db.get_recent(10)
+        self._display_history(records)
+        if records:
+            self.set_status("Histórico carregado abaixo.")
+        else:
+            self.set_status("Nenhum download no histórico ainda.")
+
+    def _show_history_placeholder(self):
+        self._clear_history_display()
+        placeholder = customtkinter.CTkLabel(
+            self.history_scrollable,
+            text="Use o botão Histórico para ver downloads anteriores.",
+            anchor="w",
+            justify="left",
+            wraplength=520,
+            font=(None, 11),
+        )
+        placeholder.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
+
+    def _clear_history_display(self):
+        for widget in self.history_scrollable.winfo_children():
+            widget.destroy()
+
+    def _display_history(self, records):
+        self._clear_history_display()
         if not records:
-            messagebox.showinfo("Histórico", "Nenhum download registrado ainda.")
+            placeholder = customtkinter.CTkLabel(
+                self.history_scrollable,
+                text="Nenhum download no histórico ainda.",
+                anchor="w",
+                justify="left",
+                wraplength=520,
+                font=(None, 11),
+            )
+            placeholder.grid(row=0, column=0, sticky="ew", padx=8, pady=8)
             return
 
-        lines = [
-            f"{rec['created_at']} - {rec['title']} ({rec['output_format']})\n{rec['output_path']}\n"
-            for rec in records
-        ]
-        messagebox.showinfo("Histórico", "\n".join(lines))
+        for index, record in enumerate(records):
+            frame = customtkinter.CTkFrame(self.history_scrollable, corner_radius=12, fg_color="#252525")
+            frame.grid(row=index, column=0, sticky="ew", padx=8, pady=(6, 6))
+            frame.grid_columnconfigure((0, 1), weight=1)
+
+            title = record.get("title", "Título indisponível")
+            title_label = customtkinter.CTkLabel(
+                frame,
+                text=title,
+                anchor="w",
+                justify="left",
+                wraplength=400,
+                font=(None, 14, "bold"),
+            )
+            title_label.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 4))
+
+            copy_button = customtkinter.CTkButton(
+                frame,
+                text="Copiar",
+                command=lambda path=record.get("output_path", ""): self.copy_path_to_clipboard(path),
+                width=80,
+                height=28,
+                font=(None, 10),
+            )
+            copy_button.grid(row=0, column=1, sticky="e", padx=12, pady=(12, 4))
+
+            info_text = f"{record.get('created_at', '')} • {record.get('output_format', '')}"
+            info_label = customtkinter.CTkLabel(
+                frame,
+                text=info_text,
+                anchor="w",
+                justify="left",
+                wraplength=500,
+                font=(None, 11),
+            )
+            info_label.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 6))
+
+            output_path = record.get("output_path", "Caminho indisponível")
+            path_label = customtkinter.CTkLabel(
+                frame,
+                text=output_path,
+                anchor="w",
+                justify="left",
+                wraplength=500,
+                font=(None, 11),
+            )
+            path_label.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 12))
+
+            separator = customtkinter.CTkLabel(
+                frame,
+                text="",
+                height=1,
+                fg_color="#333333",
+            )
+            separator.grid(row=3, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 0))
 
     def set_status(self, text: str):
         self.window.after(0, lambda: self.status_label.configure(text=text))
