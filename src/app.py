@@ -15,10 +15,10 @@ import requests
 import yt_dlp
 from PIL import Image
 
-from .config import DEFAULT_DOWNLOAD_PATH, FFMPEG_LOCATION, ConfigManager
-from .downloader import DownloadError, YTDownloader
+from .config import DEFAULT_DOWNLOAD_PATH, ConfigManager
+from .downloader import DownloadError, YTDownloader, get_ffmpeg_location
 from .history import HistoryDB
-from .validators import is_valid_folder_path, is_valid_youtube_url
+from .validators import is_valid_folder_path, is_valid_youtube_url, normalize_youtube_url
 from .update_checker import UpdateChecker
 
 customtkinter.set_appearance_mode("Dark")
@@ -42,7 +42,7 @@ class App:
         self.current_video_info = None
         self.download_cancelled = False
         self.thumbnail_image = None
-        self.ffmpeg_available = (FFMPEG_LOCATION / "ffmpeg.exe").exists() or shutil.which("ffmpeg") is not None
+        self.ffmpeg_available = get_ffmpeg_location() is not None
 
         # Verificador de atualização
         self.update_checker = UpdateChecker()
@@ -55,8 +55,10 @@ class App:
         self._check_for_updates_async()
 
         if not self.ffmpeg_available:
-            path_text = str(FFMPEG_LOCATION)
-            self.set_status(f"Aviso: FFmpeg não encontrado em {path_text}. Instale-o para converter MP3/MP4 corretamente.")
+            self.set_status(
+                "Aviso: FFmpeg não encontrado. Coloque tools/ffmpeg/bin/ffmpeg.exe ao lado do executável "
+                "ou instale em C:\\ffmpeg\\bin, ou deixe ffmpeg disponível no PATH."
+            )
 
     def _build_ui(self):
         customtkinter.CTkLabel(self.window, text="Downloader YouTube", font=(None, 24, "bold")).pack(padx=16, pady=(16, 8))
@@ -127,24 +129,24 @@ class App:
         self.progress_bar.set(0)
         self.progress_bar.pack(fill="x", padx=16, pady=(0, 10))
 
-        buttons_frame = customtkinter.CTkFrame(self.window)
-        buttons_frame.pack(fill="x", padx=16, pady=(0, 16))
+        self.button_frame = customtkinter.CTkFrame(self.window)
+        self.button_frame.pack(fill="x", padx=16, pady=(0, 16))
         for index in range(6):  # Aumentado para 6 colunas
-            buttons_frame.grid_columnconfigure(index, weight=1)
+            self.button_frame.grid_columnconfigure(index, weight=1)
 
-        self.download_button = customtkinter.CTkButton(buttons_frame, text="Baixar", command=self.start_download, state="disabled")
+        self.download_button = customtkinter.CTkButton(self.button_frame, text="Baixar", command=self.start_download, state="disabled")
         self.download_button.grid(row=0, column=0, sticky="ew", padx=(0, 8), pady=8)
 
-        self.open_folder_button = customtkinter.CTkButton(buttons_frame, text="Abrir pasta", command=self.open_destination_folder, state="disabled")
+        self.open_folder_button = customtkinter.CTkButton(self.button_frame, text="Abrir pasta", command=self.open_destination_folder, state="disabled")
         self.open_folder_button.grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=8)
 
-        self.history_button = customtkinter.CTkButton(buttons_frame, text="Histórico", command=self.show_history)
+        self.history_button = customtkinter.CTkButton(self.button_frame, text="Histórico", command=self.show_history)
         self.history_button.grid(row=0, column=2, sticky="ew", padx=(0, 8), pady=8)
 
-        self.theme_button = customtkinter.CTkButton(buttons_frame, text="Tema", command=self.toggle_theme)
+        self.theme_button = customtkinter.CTkButton(self.button_frame, text="Tema", command=self.toggle_theme)
         self.theme_button.grid(row=0, column=3, sticky="ew", padx=(0, 8), pady=8)
 
-        self.update_ytdlp_button = customtkinter.CTkButton(buttons_frame, text="Atualizar yt-dlp", command=self.update_ytdlp)
+        self.update_ytdlp_button = customtkinter.CTkButton(self.button_frame, text="Atualizar yt-dlp", command=self.update_ytdlp)
         self.update_ytdlp_button.grid(row=0, column=4, sticky="ew", padx=(0, 8), pady=8)
 
         self.history_scrollable = customtkinter.CTkScrollableFrame(self.window, height=200)
@@ -173,6 +175,7 @@ class App:
     def _fetch_info_thread(self, url: str):
         try:
             allow_playlist = self.allow_playlist_var.get()
+            url = normalize_youtube_url(url, allow_playlist)
             self.downloader.allow_playlist = allow_playlist
             info = self.downloader.get_video_info(url)
             self.current_video_info = info
@@ -325,6 +328,7 @@ class App:
 
     def _download_thread(self, url: str, destination: Path, format_label: str, allow_playlist: bool):
         try:
+            url = normalize_youtube_url(url, allow_playlist)
             format_key = YTDownloader.format_key_from_label(format_label)
             info = self.downloader.download(
                 url=url,

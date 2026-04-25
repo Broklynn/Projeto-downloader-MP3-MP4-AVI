@@ -1,8 +1,21 @@
 from pathlib import Path
 import json
 import os
+import sys
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+def get_source_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def get_executable_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.argv[0]).resolve().parent
+    return get_source_root()
+
+
+PROJECT_ROOT = get_source_root()
+EXECUTABLE_ROOT = get_executable_root()
 DEFAULT_DOWNLOAD_PATH = Path.home() / "Downloads"
 HISTORY_DB_PATH = PROJECT_ROOT / "history.db"
 FFMPEG_LOCATION = Path(r"C:\ffmpeg\bin")

@@ -2,7 +2,7 @@ import yt_dlp
 from pathlib import Path
 from typing import Optional, Dict, Any
 import shutil
-from .config import FFMPEG_LOCATION, FORMAT_OPTIONS
+from .config import EXECUTABLE_ROOT, PROJECT_ROOT, FORMAT_OPTIONS
 
 
 class DownloadError(Exception):
@@ -12,29 +12,29 @@ class DownloadError(Exception):
 def get_ffmpeg_location() -> Optional[str]:
     """
     Detecta a localização do FFmpeg nesta ordem:
-    1. C:\\ffmpeg\\bin\\ffmpeg.exe
-    2. tools\\ffmpeg\\bin\\ffmpeg.exe dentro da pasta do projeto
-    3. shutil.which("ffmpeg")
-    
+    1. pasta_do_exe/tools/ffmpeg/bin/ffmpeg.exe
+    2. pasta_do_projeto/tools/ffmpeg/bin/ffmpeg.exe
+    3. C:/ffmpeg/bin/ffmpeg.exe
+    4. PATH do sistema
+
     Retorna o diretório onde o ffmpeg.exe está localizado, ou None se não encontrado.
     """
-    from .config import PROJECT_ROOT
-    
-    # 1. Verificar C:\ffmpeg\bin\ffmpeg.exe
-    ffmpeg_exe = Path(r"C:\ffmpeg\bin\ffmpeg.exe")
-    if ffmpeg_exe.exists():
-        return str(ffmpeg_exe.parent)
-    
-    # 2. Verificar tools\ffmpeg\bin\ffmpeg.exe dentro da pasta do projeto
+    executable_ffmpeg = EXECUTABLE_ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
+    if executable_ffmpeg.exists():
+        return str(executable_ffmpeg.parent)
+
     project_ffmpeg = PROJECT_ROOT / "tools" / "ffmpeg" / "bin" / "ffmpeg.exe"
     if project_ffmpeg.exists():
         return str(project_ffmpeg.parent)
-    
-    # 3. Usar shutil.which("ffmpeg")
+
+    ffmpeg_exe = Path(r"C:/ffmpeg/bin/ffmpeg.exe")
+    if ffmpeg_exe.exists():
+        return str(ffmpeg_exe.parent)
+
     which_result = shutil.which("ffmpeg")
     if which_result:
         return str(Path(which_result).parent)
-    
+
     return None
 
 
