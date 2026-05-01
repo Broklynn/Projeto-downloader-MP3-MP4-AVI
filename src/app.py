@@ -85,14 +85,25 @@ class App:
         options_frame = customtkinter.CTkFrame(self.window)
         options_frame.pack(fill="x", padx=16, pady=(0, 10))
 
-        customtkinter.CTkLabel(options_frame, text="Formato:").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=8)
-        self.format_combo = customtkinter.CTkComboBox(
+        options_frame.grid_columnconfigure((0, 1), weight=1)
+
+        customtkinter.CTkLabel(options_frame, text="Formato:").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(8, 2))
+        customtkinter.CTkLabel(options_frame, text="Resolução/Qualidade:").grid(row=0, column=1, sticky="w", padx=(8, 0), pady=(8, 2))
+
+        self.output_format_combo = customtkinter.CTkComboBox(
             options_frame,
-            values=DownloadService.get_format_choices(),
-            width=220,
+            values=DownloadService.get_output_format_choices(),
+            command=self._on_output_format_change,
         )
-        self.format_combo.set(DownloadService.get_format_choices()[0])
-        self.format_combo.grid(row=0, column=1, padx=(0, 8), pady=8)
+        self.output_format_combo.set("MP4")
+        self.output_format_combo.grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(0, 8))
+
+        self.quality_combo = customtkinter.CTkComboBox(
+            options_frame,
+            values=DownloadService.get_quality_choices("MP4"),
+        )
+        self.quality_combo.set("1080p")
+        self.quality_combo.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(0, 8))
 
         self.allow_playlist_var = customtkinter.BooleanVar(value=False)
         self.allow_playlist_switch = customtkinter.CTkCheckBox(
@@ -102,7 +113,7 @@ class App:
             onvalue=True,
             offvalue=False,
         )
-        self.allow_playlist_switch.grid(row=1, column=0, columnspan=2, sticky="w", padx=(0, 8), pady=(0, 8))
+        self.allow_playlist_switch.grid(row=2, column=0, columnspan=2, sticky="w", padx=(0, 8), pady=(0, 8))
 
         path_frame = customtkinter.CTkFrame(self.window)
         path_frame.pack(fill="x", padx=16, pady=(0, 10))
@@ -152,6 +163,14 @@ class App:
 
         self._show_history_placeholder()
 
+    def _on_output_format_change(self, output_format: str):
+        choices = DownloadService.get_quality_choices(output_format)
+        current_quality = self.quality_combo.get()
+        self.quality_combo.configure(values=choices)
+        self.quality_combo.set(
+            current_quality if current_quality in choices else DownloadService.default_quality(output_format)
+        )
+
     def fetch_info(self):
         url = self.url_entry.get().strip()
         if not is_valid_url(url):
@@ -169,8 +188,6 @@ class App:
 
         allow_playlist = self.allow_playlist_var.get()
         normalized_url = normalize_youtube_url(url, allow_playlist=allow_playlist)
-        print("URL original:", url)
-        print("URL normalizada:", normalized_url)
 
         thread = threading.Thread(
             target=self._fetch_info_thread,
@@ -329,7 +346,8 @@ class App:
     def start_download(self):
         url = self.url_entry.get().strip()
         destination = self.destination_var.get().strip()
-        format_label = self.format_combo.get()
+        output_format = self.output_format_combo.get()
+        quality = self.quality_combo.get()
         allow_playlist = self.allow_playlist_var.get()
 
         if not is_valid_url(url):
@@ -341,15 +359,13 @@ class App:
             return
 
         normalized_url = normalize_youtube_url(url, allow_playlist=allow_playlist)
-        print("URL original:", url)
-        print("URL normalizada:", normalized_url)
 
-        if format_label.startswith("MP3") and not self.ffmpeg_available:
+        if DownloadService.requires_ffmpeg(output_format) and not self.ffmpeg_available:
             messagebox.showerror(
                 "FFmpeg ausente",
-                "FFmpeg é necessário para baixar MP3. Instale o FFmpeg e reinicie o aplicativo.",
+                "FFmpeg é necessário para converter ou mesclar este formato. Instale o FFmpeg e reinicie o aplicativo.",
             )
-            self.set_status("Instale o FFmpeg antes de baixar MP3.")
+            self.set_status("Instale o FFmpeg antes de baixar neste formato.")
             return
 
         self.download_button.configure(state="disabled")
@@ -360,17 +376,18 @@ class App:
 
         thread = threading.Thread(
             target=self._download_thread,
-            args=(normalized_url, Path(destination), format_label, allow_playlist),
+            args=(normalized_url, Path(destination), output_format, quality, allow_playlist),
             daemon=True,
         )
         thread.start()
 
-    def _download_thread(self, url: str, destination: Path, format_label: str, allow_playlist: bool):
+    def _download_thread(self, url: str, destination: Path, output_format: str, quality: str, allow_playlist: bool):
         try:
             request = DownloadRequest(
                 url=url,
                 output_folder=destination,
-                format_label=format_label,
+                output_format=output_format,
+                quality=quality,
                 allow_playlist=allow_playlist,
                 progress_hook=self._progress_hook,
                 should_cancel=lambda: self.download_cancelled,
@@ -380,7 +397,8 @@ class App:
             self.history_db.save_record(
                 url=url,
                 title=result.title,
-                output_format=format_label,
+                output_format=result.output_format,
+                output_quality=result.quality,
                 output_path=str(destination),
             )
             self.window.after(0, self._handle_download_success)
@@ -515,7 +533,8 @@ class App:
             )
             copy_button.grid(row=0, column=1, sticky="e", padx=12, pady=(12, 4))
 
-            info_text = f"{record.get('created_at', '')} • {record.get('output_format', '')}"
+            format_text = self._format_history_format(record)
+            info_text = f"{record.get('created_at', '')} • {format_text}"
             info_label = customtkinter.CTkLabel(
                 frame,
                 text=info_text,
@@ -544,6 +563,13 @@ class App:
                 fg_color="#333333",
             )
             separator.grid(row=3, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 0))
+
+    def _format_history_format(self, record) -> str:
+        output_format = record.get("output_format", "")
+        output_quality = record.get("output_quality", "")
+        if output_format and output_quality:
+            return f"{output_format} - {output_quality}"
+        return output_format or output_quality
 
     def set_status(self, text: str):
         self.window.after(0, lambda: self.status_label.configure(text=text))

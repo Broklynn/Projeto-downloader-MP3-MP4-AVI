@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS history (
     url TEXT NOT NULL,
     title TEXT,
     output_format TEXT,
+    output_quality TEXT,
     output_path TEXT,
     created_at TEXT NOT NULL
 )
@@ -29,6 +30,9 @@ class HistoryDB:
     def _initialize(self):
         with self._connect() as conn:
             conn.execute(CREATE_TABLE_SQL)
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(history)").fetchall()]
+            if "output_quality" not in columns:
+                conn.execute("ALTER TABLE history ADD COLUMN output_quality TEXT")
             conn.commit()
 
     def save_record(
@@ -36,13 +40,18 @@ class HistoryDB:
         url: str,
         title: str,
         output_format: str,
+        output_quality: str,
         output_path: str,
     ) -> None:
         created_at = datetime.now().isoformat(sep=" ", timespec="seconds")
         with self._connect() as conn:
             conn.execute(
-                "INSERT INTO history (url, title, output_format, output_path, created_at) VALUES (?, ?, ?, ?, ?)",
-                (url, title, output_format, output_path, created_at),
+                (
+                    "INSERT INTO history "
+                    "(url, title, output_format, output_quality, output_path, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)"
+                ),
+                (url, title, output_format, output_quality, output_path, created_at),
             )
             conn.commit()
 
@@ -57,7 +66,10 @@ class HistoryDB:
     def get_recent(self, limit: int = 10) -> List[Dict[str, str]]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT url, title, output_format, output_path, created_at FROM history ORDER BY id DESC LIMIT ?",
+                (
+                    "SELECT url, title, output_format, output_quality, output_path, created_at "
+                    "FROM history ORDER BY id DESC LIMIT ?"
+                ),
                 (limit,),
             ).fetchall()
         return [
@@ -65,8 +77,9 @@ class HistoryDB:
                 "url": row[0],
                 "title": row[1],
                 "output_format": row[2],
-                "output_path": row[3],
-                "created_at": row[4],
+                "output_quality": row[3],
+                "output_path": row[4],
+                "created_at": row[5],
             }
             for row in rows
         ]
