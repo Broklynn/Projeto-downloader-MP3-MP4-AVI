@@ -57,7 +57,6 @@ class UpdateChecker:
             current_parts = [int(x) for x in self.current_version.split('.')]
             remote_parts = [int(x) for x in remote_version.split('.')]
 
-            # Preenche com zeros se necessário
             while len(current_parts) < 3:
                 current_parts.append(0)
             while len(remote_parts) < 3:
@@ -66,7 +65,6 @@ class UpdateChecker:
             return remote_parts > current_parts
 
         except (ValueError, AttributeError):
-            # Se não conseguir comparar, assume que não há atualização
             return False
 
     def check_async(self, callback):

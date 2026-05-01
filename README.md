@@ -102,6 +102,7 @@ Para gerar um executável .exe para Windows:
 
 - O FFmpeg é necessário para conversão de áudio para MP3.
 - Se o FFmpeg não estiver no `PATH`, o download pode falhar em formatos de áudio.
+- Mantenha o `yt-dlp` sempre atualizado. Plataformas como YouTube, Instagram e TikTok mudam com frequência, e versões antigas podem causar erros de extração, assinatura ou formato indisponível.
 - Para gerar um executável no futuro, instale o PyInstaller separadamente:
 
 ```bash

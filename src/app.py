@@ -1,29 +1,25 @@
 ﻿import os
 import platform
 import re
-import shutil
 import subprocess
 import sys
 import threading
-from io import BytesIO
 from pathlib import Path
 from tkinter import filedialog, messagebox
 from typing import Optional
 
 import customtkinter
-import requests
-import yt_dlp
-from PIL import Image
 
-from .config import DEFAULT_DOWNLOAD_PATH, ConfigManager
-from .downloader import DownloadError, YTDownloader, get_ffmpeg_location
+from .config import ConfigManager
 from .history import HistoryDB
-from .validators import is_valid_folder_path, is_valid_url
+from .services import DownloadRequest, DownloadService, PreviewResult, PreviewService, get_ffmpeg_location
+from .validators import is_valid_folder_path, is_valid_url, normalize_youtube_url
 from .update_checker import UpdateChecker
 
 customtkinter.set_appearance_mode("Dark")
 customtkinter.set_default_color_theme("dark-blue")
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+ANSI_SGR_RE = re.compile(r"\[[0-9;]*m")
 
 
 class App:
@@ -37,21 +33,22 @@ class App:
         self.window.minsize(560, 660)
         self.window.resizable(False, False)
 
-        self.downloader = YTDownloader()
+        self.download_service = DownloadService()
+        self.preview_service = PreviewService()
         self.history_db = HistoryDB()
         self.current_video_info = None
         self.download_cancelled = False
         self.thumbnail_image = None
+        self.thumbnail_pil_image = None
+        self.thumbnail_request_id = 0
         self.ffmpeg_available = get_ffmpeg_location() is not None
 
-        # Verificador de atualização
         self.update_checker = UpdateChecker()
         self.update_info = None
         self.update_button = None
 
         self._build_ui()
 
-        # Verificar atualizações em segundo plano
         self._check_for_updates_async()
 
         if not self.ffmpeg_available:
@@ -91,10 +88,10 @@ class App:
         customtkinter.CTkLabel(options_frame, text="Formato:").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=8)
         self.format_combo = customtkinter.CTkComboBox(
             options_frame,
-            values=YTDownloader.get_format_choices(),
+            values=DownloadService.get_format_choices(),
             width=220,
         )
-        self.format_combo.set(YTDownloader.get_format_choices()[0])
+        self.format_combo.set(DownloadService.get_format_choices()[0])
         self.format_combo.grid(row=0, column=1, padx=(0, 8), pady=8)
 
         self.allow_playlist_var = customtkinter.BooleanVar(value=False)
@@ -123,7 +120,7 @@ class App:
 
         self.toast_label = customtkinter.CTkLabel(self.window, text="", anchor="center", fg_color="#2E8B57", text_color="white", corner_radius=8)
         self.toast_label.pack(fill="x", padx=16, pady=(0, 8))
-        self.toast_label.pack_forget()  # Esconder inicialmente
+        self.toast_label.pack_forget()
 
         self.progress_bar = customtkinter.CTkProgressBar(self.window)
         self.progress_bar.set(0)
@@ -131,7 +128,7 @@ class App:
 
         self.button_frame = customtkinter.CTkFrame(self.window)
         self.button_frame.pack(fill="x", padx=16, pady=(0, 16))
-        for index in range(6):  # Aumentado para 6 colunas
+        for index in range(6):
             self.button_frame.grid_columnconfigure(index, weight=1)
 
         self.download_button = customtkinter.CTkButton(self.button_frame, text="Baixar", command=self.start_download, state="disabled")
@@ -160,53 +157,64 @@ class App:
         if not is_valid_url(url):
             self.set_status("Link inválido. Cole uma URL válida.")
             self.download_button.configure(state="disabled")
+            self.clear_thumbnail()
             return
 
         self.set_status("Buscando informações...")
         self.download_button.configure(state="disabled")
         self.info_label.configure(text="Buscando título...")
         self.duration_label.configure(text="Duração: --:--")
-        self.thumbnail_label.configure(image=None, text="Sem thumbnail")
-        self.thumbnail_image = None
+        self.clear_thumbnail()
+        thumbnail_request_id = self.thumbnail_request_id
 
-        thread = threading.Thread(target=self._fetch_info_thread, args=(url,), daemon=True)
+        allow_playlist = self.allow_playlist_var.get()
+        normalized_url = normalize_youtube_url(url, allow_playlist=allow_playlist)
+        print("URL original:", url)
+        print("URL normalizada:", normalized_url)
+
+        thread = threading.Thread(
+            target=self._fetch_info_thread,
+            args=(normalized_url, allow_playlist, thumbnail_request_id),
+            daemon=True,
+        )
         thread.start()
 
-    def _fetch_info_thread(self, url: str):
+    def _fetch_info_thread(self, url: str, allow_playlist: bool, thumbnail_request_id: int):
         try:
-            allow_playlist = self.allow_playlist_var.get()
-            self.downloader.allow_playlist = allow_playlist
-            info = self.downloader.get_video_info(url)
-            self.current_video_info = info
+            preview = self.preview_service.fetch_preview(url, allow_playlist)
+            self.current_video_info = preview.info
+            self.window.after(0, lambda: self._apply_preview_result(preview))
 
-            title = info.get("title", "Título não disponível")
-            subtitle = title
-            if info.get("_type") == "playlist":
-                total = len(info.get("entries", []))
-                subtitle = f"Playlist detectada ({total} vídeos): {title}"
-                duration_text = f"Playlist com {total} vídeos"
-                if not allow_playlist:
-                    self.set_status("Playlist detectada. Ative 'Permitir playlist' para baixar.")
-                    self.download_button.configure(state="disabled")
-                    self._update_info_label(subtitle)
-                    self._update_duration_label(duration_text)
-                    return
+            if preview.thumbnail_url:
+                self._load_thumbnail(preview.thumbnail_url, thumbnail_request_id)
             else:
-                duration_text = self._format_duration(info.get("duration"))
-
-            self.set_status("Pronto para baixar")
-            self.download_button.configure(state="normal")
-            self._update_info_label(subtitle)
-            self._update_duration_label(duration_text)
-            self._load_thumbnail(info.get("thumbnail"))
+                self.window.after(0, lambda: self._clear_thumbnail_for_request(thumbnail_request_id))
         except Exception as error:
-            self.set_status(self._format_yt_dlp_error(error, context="info"))
-            self.download_button.configure(state="disabled")
+            message = self._format_yt_dlp_error(error, context="info")
+            self.window.after(0, lambda: self._handle_preview_error(message))
+
+    def _apply_preview_result(self, preview: PreviewResult):
+        self.info_label.configure(text=preview.subtitle)
+        self.duration_label.configure(text=self._format_preview_duration_label(preview.duration_text))
+        self.status_label.configure(text=preview.status_message)
+        self.download_button.configure(state="normal" if preview.can_download else "disabled")
+
+    def _format_preview_duration_label(self, duration_text: str) -> str:
+        if duration_text == "Duração indisponível":
+            return duration_text
+        return f"Duração: {duration_text}"
+
+    def _handle_preview_error(self, message: str):
+        self.status_label.configure(text=message)
+        self.download_button.configure(state="disabled")
+        self.clear_thumbnail()
 
     def _format_yt_dlp_error(self, error: Exception, context: str = "download") -> str:
-        message = str(error)
+        message = self._clean_text(str(error))
         lower = message.lower()
 
+        if "requested format is not available" in lower or "requested format not available" in lower:
+            return "Formato solicitado indisponível. Tente baixar em outro formato ou qualidade."
         if "unsupported url" in lower or "unable to download webpage" in lower or "unsupported" in lower:
             return "Plataforma não suportada ou URL inválida. Cole um link de site suportado pelo yt-dlp."
         if "private" in lower or "não disponível" in lower or "restrito" in lower or "blocked" in lower:
@@ -220,25 +228,11 @@ class App:
 
         return message
 
-    def _update_info_label(self, text: str):
-        self.window.after(0, lambda: self.info_label.configure(text=text))
-
-    def _update_duration_label(self, text: str):
-        self.window.after(0, lambda: self.duration_label.configure(text=f"Duração: {text}"))
-
-    def _format_duration(self, seconds: Optional[int]) -> str:
-        if not seconds or seconds <= 0:
-            return "--:--"
-        minutes, seconds = divmod(int(seconds), 60)
-        hours, minutes = divmod(minutes, 60)
-        if hours:
-            return f"{hours:d}:{minutes:02d}:{seconds:02d}"
-        return f"{minutes:d}:{seconds:02d}"
-
     def _clean_text(self, value: Optional[str]) -> str:
         if not value:
             return ""
         text = ANSI_ESCAPE_RE.sub("", str(value))
+        text = ANSI_SGR_RE.sub("", text)
         text = text.replace("\r", " ").replace("\n", " ")
         text = re.sub(r"\s+", " ", text).strip()
         return text
@@ -263,9 +257,6 @@ class App:
         return f"{speed:.1f} {units[index]}"
 
     def _progress_hook(self, data: dict):
-        if self.download_cancelled:
-            raise yt_dlp.utils.DownloadError("Download cancelado pelo usuário.")
-
         status = data.get("status")
         if status == "downloading":
             downloaded = data.get("downloaded_bytes") or 0
@@ -289,17 +280,45 @@ class App:
         elif status == "error":
             self.window.after(0, lambda: self.status_label.configure(text="Erro no download"))
 
-    def _load_thumbnail(self, thumbnail_url: str):
+    def _load_thumbnail(self, thumbnail_url: str, thumbnail_request_id: int):
         if not thumbnail_url:
+            self.window.after(0, lambda: self._clear_thumbnail_for_request(thumbnail_request_id))
             return
+        image = self.preview_service.load_thumbnail_image(thumbnail_url)
+        if image is None:
+            self.window.after(0, lambda: self._clear_thumbnail_for_request(thumbnail_request_id))
+            return
+
+        self.window.after(0, lambda: self._display_thumbnail(image, thumbnail_request_id))
+
+    def _display_thumbnail(self, image, thumbnail_request_id: Optional[int] = None):
+        if thumbnail_request_id is not None and thumbnail_request_id != self.thumbnail_request_id:
+            return
+
         try:
-            response = requests.get(thumbnail_url, timeout=5)
-            response.raise_for_status()
-            image = Image.open(BytesIO(response.content)).convert("RGBA")
-            self.thumbnail_image = customtkinter.CTkImage(light_image=image, dark_image=image, size=(120, 68))
-            self.window.after(0, lambda: self.thumbnail_label.configure(image=self.thumbnail_image, text=""))
+            if image is None:
+                self.clear_thumbnail()
+                return
+
+            self.thumbnail_pil_image = image
+            self.thumbnail_image = customtkinter.CTkImage(
+                light_image=self.thumbnail_pil_image,
+                dark_image=self.thumbnail_pil_image,
+                size=(120, 68),
+            )
+            self.thumbnail_label.configure(image=self.thumbnail_image, text="")
         except Exception:
-            self.window.after(0, lambda: self.thumbnail_label.configure(text="Thumbnail indisponível"))
+            self.clear_thumbnail()
+
+    def _clear_thumbnail_for_request(self, thumbnail_request_id: int):
+        if thumbnail_request_id == self.thumbnail_request_id:
+            self.clear_thumbnail()
+
+    def clear_thumbnail(self):
+        self.thumbnail_request_id += 1
+        self.thumbnail_image = None
+        self.thumbnail_pil_image = None
+        self.thumbnail_label.configure(image="", text="Sem thumbnail")
 
     def choose_folder(self):
         folder = filedialog.askdirectory(initialdir=self.destination_var.get())
@@ -321,6 +340,10 @@ class App:
             self.set_status("Pasta de destino inválida. Escolha outra pasta.")
             return
 
+        normalized_url = normalize_youtube_url(url, allow_playlist=allow_playlist)
+        print("URL original:", url)
+        print("URL normalizada:", normalized_url)
+
         if format_label.startswith("MP3") and not self.ffmpeg_available:
             messagebox.showerror(
                 "FFmpeg ausente",
@@ -337,36 +360,40 @@ class App:
 
         thread = threading.Thread(
             target=self._download_thread,
-            args=(url, Path(destination), format_label, allow_playlist),
+            args=(normalized_url, Path(destination), format_label, allow_playlist),
             daemon=True,
         )
         thread.start()
 
     def _download_thread(self, url: str, destination: Path, format_label: str, allow_playlist: bool):
         try:
-            format_key = YTDownloader.format_key_from_label(format_label)
-            info = self.downloader.download(
+            request = DownloadRequest(
                 url=url,
                 output_folder=destination,
-                format_key=format_key,
+                format_label=format_label,
                 allow_playlist=allow_playlist,
                 progress_hook=self._progress_hook,
+                should_cancel=lambda: self.download_cancelled,
+                status_callback=self.set_status,
             )
-            title = info.get("title") or url
+            result = self.download_service.download(request)
             self.history_db.save_record(
                 url=url,
-                title=title,
+                title=result.title,
                 output_format=format_label,
                 output_path=str(destination),
             )
-            self.set_status("Download concluído com sucesso.")
-            self.show_toast("Download concluído com sucesso!")
-            self.open_folder_button.configure(state="normal")
+            self.window.after(0, self._handle_download_success)
         except Exception as error:
             message = self._format_yt_dlp_error(error, context="download")
             self.set_status(f"Erro no download: {message}")
         finally:
             self.window.after(0, lambda: self.download_button.configure(state="normal"))
+
+    def _handle_download_success(self):
+        self.status_label.configure(text="Download concluído com sucesso.")
+        self.show_toast("Download concluído com sucesso!")
+        self.open_folder_button.configure(state="normal")
 
     def update_ytdlp(self):
         self.update_ytdlp_button.configure(state="disabled")
@@ -537,7 +564,6 @@ class App:
             self.update_info = update_info
             self._show_update_notification(update_info)
         else:
-            # Se não conseguiu verificar, mostra mensagem discreta
             self.set_status("Não foi possível verificar atualizações.")
 
     def _show_update_notification(self, update_info):
@@ -545,7 +571,6 @@ class App:
         version = update_info.get("version", "")
         self.set_status(f"Nova versão disponível: {version}")
 
-        # Adiciona botão de atualização se não existir
         if not self.update_button:
             self.update_button = customtkinter.CTkButton(
                 self.button_frame,
