@@ -18,7 +18,7 @@ from PIL import Image
 from .config import DEFAULT_DOWNLOAD_PATH, ConfigManager
 from .downloader import DownloadError, YTDownloader, get_ffmpeg_location
 from .history import HistoryDB
-from .validators import is_valid_folder_path, is_valid_youtube_url, normalize_youtube_url
+from .validators import is_valid_folder_path, is_valid_url
 from .update_checker import UpdateChecker
 
 customtkinter.set_appearance_mode("Dark")
@@ -63,7 +63,7 @@ class App:
     def _build_ui(self):
         customtkinter.CTkLabel(self.window, text="Downloader YouTube", font=(None, 24, "bold")).pack(padx=16, pady=(16, 8))
 
-        self.url_entry = customtkinter.CTkEntry(self.window, placeholder_text="Cole o link do YouTube aqui...")
+        self.url_entry = customtkinter.CTkEntry(self.window, placeholder_text="Cole o link (YouTube, Instagram, TikTok...)")
         self.url_entry.pack(fill="x", padx=16, pady=(0, 10))
         self.url_entry.bind("<Return>", lambda event: self.fetch_info())
 
@@ -157,8 +157,8 @@ class App:
 
     def fetch_info(self):
         url = self.url_entry.get().strip()
-        if not is_valid_youtube_url(url):
-            self.set_status("Link inválido. Cole um link do YouTube.")
+        if not is_valid_url(url):
+            self.set_status("Link inválido. Cole uma URL válida.")
             self.download_button.configure(state="disabled")
             return
 
@@ -175,7 +175,6 @@ class App:
     def _fetch_info_thread(self, url: str):
         try:
             allow_playlist = self.allow_playlist_var.get()
-            url = normalize_youtube_url(url, allow_playlist)
             self.downloader.allow_playlist = allow_playlist
             info = self.downloader.get_video_info(url)
             self.current_video_info = info
@@ -201,8 +200,25 @@ class App:
             self._update_duration_label(duration_text)
             self._load_thumbnail(info.get("thumbnail"))
         except Exception as error:
-            self.set_status(f"Erro ao buscar informações: {error}")
+            self.set_status(self._format_yt_dlp_error(error, context="info"))
             self.download_button.configure(state="disabled")
+
+    def _format_yt_dlp_error(self, error: Exception, context: str = "download") -> str:
+        message = str(error)
+        lower = message.lower()
+
+        if "unsupported url" in lower or "unable to download webpage" in lower or "unsupported" in lower:
+            return "Plataforma não suportada ou URL inválida. Cole um link de site suportado pelo yt-dlp."
+        if "private" in lower or "não disponível" in lower or "restrito" in lower or "blocked" in lower:
+            return "Conteúdo privado ou restrito. Verifique se o vídeo está disponível publicamente."
+        if "forbidden" in lower or "403" in lower:
+            return "Acesso negado ao conteúdo. Pode ser vídeo privado ou bloqueado."
+        if "404" in lower or "not found" in lower:
+            return "Conteúdo não encontrado. Verifique a URL e tente novamente."
+        if "no video formats found" in lower or "unable to extract" in lower:
+            return "Não foi possível extrair informações do link. Pode ser uma plataforma ou formato não suportado."
+
+        return message
 
     def _update_info_label(self, text: str):
         self.window.after(0, lambda: self.info_label.configure(text=text))
@@ -297,8 +313,8 @@ class App:
         format_label = self.format_combo.get()
         allow_playlist = self.allow_playlist_var.get()
 
-        if not is_valid_youtube_url(url):
-            self.set_status("Link inválido. Cole um link do YouTube.")
+        if not is_valid_url(url):
+            self.set_status("Link inválido. Cole uma URL válida.")
             return
 
         if not is_valid_folder_path(destination):
@@ -328,7 +344,6 @@ class App:
 
     def _download_thread(self, url: str, destination: Path, format_label: str, allow_playlist: bool):
         try:
-            url = normalize_youtube_url(url, allow_playlist)
             format_key = YTDownloader.format_key_from_label(format_label)
             info = self.downloader.download(
                 url=url,
@@ -348,7 +363,7 @@ class App:
             self.show_toast("Download concluído com sucesso!")
             self.open_folder_button.configure(state="normal")
         except Exception as error:
-            message = str(error)
+            message = self._format_yt_dlp_error(error, context="download")
             self.set_status(f"Erro no download: {message}")
         finally:
             self.window.after(0, lambda: self.download_button.configure(state="normal"))
